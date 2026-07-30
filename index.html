@@ -18,8 +18,8 @@
    own Google account. Nothing secret ships in this file.
    ======================================================================== */
 
-const CLIENT_ID = '483233135237-ong9ip5ip7mc4655npia1htpdfhocd0t.apps.googleusercontent.com';
-const SHEET_ID  = '1oAHuPSkU4abjBDL9k_4RpWUC7c-vjfTFj1ZCUjWLXbE';
+const CLIENT_ID = 'PASTE_YOUR_CLIENT_ID_HERE.apps.googleusercontent.com';
+const SHEET_ID  = 'PASTE_YOUR_SPREADSHEET_ID_HERE';
 
 const INVENTORY = 'Inventory';
 const USAGE     = 'Usage';
@@ -182,6 +182,7 @@ const DEFAULT_ALERT_DAYS = 45;
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <script>
 /* ============================== state ============================== */
+const BUILD = 'build 3';
 let TOKEN = null;
 let TOKEN_CLIENT = null;
 let ROWS = [];
@@ -218,6 +219,20 @@ function statusOf(exp, qty, alertDays) {
     ? 'EXPIRING' : 'OK';
 }
 
+/**
+ * Row identity.
+ *
+ * Prefers the sheet's ID column, but falls back to item + expiration, which
+ * the sheet already guarantees is unique -- rebuilds collapse duplicates on
+ * exactly that pair. Without the fallback, a sheet with a blank ID column
+ * gives every row the same empty key, and every tap opens whichever row
+ * happens to be first.
+ */
+function keyOf(r) {
+  return r.id || (r.item.toLowerCase() + '|' + r.expRaw);
+}
+
+
 function uuid() {
   if (crypto.randomUUID) return crypto.randomUUID();
   return 'id-' + Date.now().toString(36) + '-' +
@@ -225,11 +240,35 @@ function uuid() {
 }
 
 /* ============================== auth =============================== */
+/*
+ * Sign-in is always a tap.
+ *
+ * The first version tried to get a token silently on load. That works on a
+ * desktop with a live Google session and fails on a phone, because the
+ * fallback needs a popup and mobile browsers only allow those in response to
+ * a user gesture. When it failed there was nothing behind it, so the app sat
+ * on "Starting..." with no button and no error -- the worst possible state,
+ * since it looks identical to a slow network.
+ *
+ * Now the sign-in screen renders immediately. A silent attempt runs behind it
+ * and skips the screen if it happens to succeed. If it doesn't, the button is
+ * already there.
+ */
+let GSI_TRIES = 0;
+
 function initAuth() {
-  if (!window.google || !google.accounts) {
+  showSignIn(null, 'checking');
+
+  if (!window.google || !google.accounts || !google.accounts.oauth2) {
+    if (++GSI_TRIES > 40) {          // ~8 seconds
+      showSignIn('Could not load Google sign-in. Check the connection, ' +
+                 'then reload.', 'ready');
+      return;
+    }
     setTimeout(initAuth, 200);
     return;
   }
+
   TOKEN_CLIENT = google.accounts.oauth2.initTokenClient({
     client_id: CLIENT_ID,
     scope: 'https://www.googleapis.com/auth/spreadsheets',
@@ -238,24 +277,47 @@ function initAuth() {
         TOKEN = resp.access_token;
         load();
       } else {
-        showSignIn('Sign-in did not complete.');
+        showSignIn('Sign-in did not complete.', 'ready');
       }
-    }
+    },
+    error_callback: () => showSignIn(null, 'ready')
   });
-  TOKEN_CLIENT.requestAccessToken({ prompt: '' });   // silent if already granted
+
+  // Try silently, but never wait on it. Whatever happens, the button is there.
+  try { TOKEN_CLIENT.requestAccessToken({ prompt: '' }); } catch (e) {}
+  setTimeout(() => { if (!TOKEN) showSignIn(null, 'ready'); }, 2500);
 }
 
-function signIn() { TOKEN_CLIENT.requestAccessToken({ prompt: 'consent' }); }
+function signIn() {
+  if (!TOKEN_CLIENT) { showSignIn('Still loading. Try again in a moment.', 'ready'); return; }
+  const btn = $('go');
+  if (btn) { btn.disabled = true; btn.textContent = 'Opening Google\u2026'; }
+  TOKEN_CLIENT.requestAccessToken({ prompt: 'consent' });
+  setTimeout(() => {
+    if (!TOKEN && $('go')) {
+      $('go').disabled = false;
+      $('go').textContent = 'Sign in with Google';
+    }
+  }, 4000);
+}
 
-function showSignIn(msg) {
+function showSignIn(msg, phase) {
+  if (TOKEN) return;
   $('hdr').hidden = true;
   $('addBtn').hidden = true;
+
+  const checking = phase === 'checking';
   $('main').innerHTML =
     '<div class="signin"><h2>Vascular Access Cart</h2>' +
     '<p>Sign in with the Google account that has access to the tracker.</p>' +
     (msg ? '<div class="err">' + esc(msg) + '</div>' : '') +
-    '<button class="btn primary" id="go">Sign in with Google</button></div>';
-  $('go').onclick = signIn;
+    '<button class="btn primary" id="go"' + (checking ? ' disabled' : '') + '>' +
+    (checking ? 'Checking\u2026' : 'Sign in with Google') + '</button>' +
+    '<p style="font-size:11px;color:#9aa7b0;margin-top:26px">' + BUILD + '</p>' +
+    '</div>';
+
+  const b = $('go');
+  if (b && !checking) b.onclick = signIn;
 }
 
 /* =============================== api =============================== */
@@ -349,6 +411,7 @@ function render() {
     .sort((a, b) => (a.exp && b.exp) ? a.exp - b.exp : 0);
 
   const units = stocked.reduce((n, r) => n + r.qty, 0);
+  $('hdr').title = BUILD;
   $('sub').textContent = stocked.length
     ? `${stocked.length} line${stocked.length === 1 ? '' : 's'} \u00b7 ${units} unit${units === 1 ? '' : 's'}`
     : 'Nothing in the cart';
@@ -372,7 +435,7 @@ function render() {
     const cls = st === 'EXPIRED' ? ' expired' : st === 'EXPIRING' ? ' expiring' : '';
     const n = r.exp ? daysUntil(r.exp) : null;
 
-    html += `<button class="row${cls}" data-id="${esc(r.id)}">` +
+    html += `<button class="row${cls}" data-key="${esc(keyOf(r))}">` +
       `<div class="row-name">${esc(r.item)}</div>` +
       (cls ? `<span class="tag">${n < 0 ? 'EXPIRED' : n + 'd'}</span>` : '') +
       `<div class="panel"><div><b>EXP</b><span>${esc(r.expRaw || '\u2014')}</span></div></div>` +
@@ -381,7 +444,7 @@ function render() {
   $('main').innerHTML = html;
 
   document.querySelectorAll('.row').forEach(el =>
-    el.addEventListener('click', () => openUse(el.dataset.id)));
+    el.addEventListener('click', () => openUse(el.dataset.key)));
 }
 
 function pips(qty) {
@@ -393,8 +456,8 @@ function pips(qty) {
 }
 
 /* ============================ log usage ============================ */
-function openUse(id) {
-  const r = ROWS.find(x => x.id === id);
+function openUse(key) {
+  const r = ROWS.find(x => keyOf(x) === key);
   if (!r) return;
 
   let n = 1;
@@ -441,7 +504,7 @@ function openUse(id) {
     $('log').disabled = true;
     $('log').textContent = 'Saving\u2026';
     try {
-      await commitUse(r.id, n);
+      await commitUse(keyOf(r), n);
       ov.remove();
       toast(`Logged ${n}. ${r.item}.`);
       await load();
@@ -464,9 +527,9 @@ function openUse(id) {
  * device happened to see on load would decrement the wrong item. The ID is
  * the only thing that stays attached to the stock it describes.
  */
-async function commitUse(id, n) {
+async function commitUse(key, n) {
   const fresh = await fetchRows();
-  const r = fresh.find(x => x.id === id);
+  const r = fresh.find(x => keyOf(x) === key);
   if (!r) throw new Error('That row is no longer on the sheet.');
   if (r.qty <= 0) throw new Error('None left \u2014 someone else logged it.');
 
