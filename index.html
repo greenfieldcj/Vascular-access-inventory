@@ -182,7 +182,7 @@ const DEFAULT_ALERT_DAYS = 45;
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <script>
 /* ============================== state ============================== */
-const BUILD = 'build 3';
+const BUILD = 'build 5';
 let TOKEN = null;
 let TOKEN_CLIENT = null;
 let ROWS = [];
@@ -411,10 +411,9 @@ function render() {
     .sort((a, b) => (a.exp && b.exp) ? a.exp - b.exp : 0);
 
   const units = stocked.reduce((n, r) => n + r.qty, 0);
-  $('hdr').title = BUILD;
-  $('sub').textContent = stocked.length
+  $('sub').textContent = (stocked.length
     ? `${stocked.length} line${stocked.length === 1 ? '' : 's'} \u00b7 ${units} unit${units === 1 ? '' : 's'}`
-    : 'Nothing in the cart';
+    : 'Nothing in the cart') + ' \u00b7 ' + BUILD;
   $('addBtn').hidden = false;
 
   if (!stocked.length) {
