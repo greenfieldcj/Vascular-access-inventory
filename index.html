@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#12495E">
+<title>Vascular Access Cart</title>
+
+<script>
+/* ========================================================================
+   FILL THESE IN. Both are safe to publish.
+
+   An OAuth client ID is public by design -- it identifies the app, it does
+   not authorise anything. Access is controlled by the authorised-origin list
+   you set in Google Cloud Console, and by each person signing in with their
+   own Google account. Nothing secret ships in this file.
+   ======================================================================== */
+
+const CLIENT_ID = '483233135237-ong9ip5ip7mc4655npia1htpdfhocd0t.apps.googleusercontent.com';
+const SHEET_ID  = '1oAHuPSkU4abjBDL9k_4RpWUC7c-vjfTFj1ZCUjWLXbE';
+
+const INVENTORY = 'Inventory';
+const USAGE     = 'Usage';
+const DEFAULT_ALERT_DAYS = 45;
+</script>
+
+<style>
+  /* Palette from sterile packaging: wrap blue, Tyvek white, tray grey.
+     EXP is set in mono because that is how it is printed on the package. */
+  :root {
+    --ink:#12212E; --ink-soft:#4A5D6B;
+    --wrap:#1C6E8C; --wrap-deep:#12495E;
+    --tray:#E7EDF1; --paper:#FFFFFF; --line:#C9D6DE;
+    --amber:#A8641C; --amber-bg:#FDF3E4;
+    --red:#9E2B25;   --red-bg:#FBEDEC;
+    --green:#1F6B4A;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;padding:0;background:var(--tray);color:var(--ink);
+    font-family:var(--sans);font-size:16px;-webkit-text-size-adjust:100%}
+
+  header{position:sticky;top:0;z-index:20;background:var(--wrap-deep);
+    color:#fff;padding:14px 16px 12px;
+    padding-top:calc(14px + env(safe-area-inset-top));
+    display:flex;align-items:flex-end;gap:12px;
+    box-shadow:0 1px 0 rgba(0,0,0,.15)}
+  header h1{margin:0;font-size:18px;font-weight:650;letter-spacing:-.01em}
+  header p{margin:3px 0 0;font-size:12.5px;color:#A9C9D8}
+  .hgroup{flex:1;min-width:0}
+  .iconbtn{background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.3);
+    color:#fff;border-radius:8px;padding:9px 13px;font:inherit;font-size:13px;
+    font-weight:600;cursor:pointer;white-space:nowrap}
+  .iconbtn:active{background:rgba(255,255,255,.26)}
+
+  main{padding:6px 12px 40px}
+  .eyebrow{font-size:10.5px;text-transform:uppercase;letter-spacing:.12em;
+    font-weight:700;color:var(--ink-soft);margin:20px 4px 8px;
+    display:flex;align-items:center;gap:8px}
+  .eyebrow::after{content:"";flex:1;height:1px;background:var(--line)}
+
+  .row{width:100%;text-align:left;display:block;background:var(--paper);
+    border:1px solid var(--line);border-left:4px solid var(--wrap);
+    border-radius:8px;padding:12px 14px;margin-bottom:8px;
+    font:inherit;color:inherit;min-height:62px;cursor:pointer;position:relative;
+    transition:transform .09s ease}
+  .row:active{transform:scale(.988)}
+  .row:focus-visible{outline:3px solid var(--wrap);outline-offset:2px}
+  .row.expiring{border-left-color:var(--amber);background:var(--amber-bg)}
+  .row.expired{border-left-color:var(--red);background:var(--red-bg)}
+  .row-name{font-size:16.5px;font-weight:620;line-height:1.25;padding-right:70px}
+  .panel{display:flex;gap:16px;margin-top:7px;font-family:var(--mono);
+    font-size:12.5px;color:var(--ink-soft)}
+  .panel b{font-weight:700;font-size:9.5px;letter-spacing:.08em;
+    opacity:.8;margin-right:5px}
+  .panel span{color:var(--ink)}
+  .tag{position:absolute;top:11px;right:12px;font-family:var(--mono);
+    font-size:10px;font-weight:700;letter-spacing:.06em;padding:3px 7px;
+    border-radius:4px;background:var(--wrap);color:#fff}
+  .expiring .tag{background:var(--amber)}
+  .expired .tag{background:var(--red)}
+
+  /* Units as discrete pips: kits are counted, not measured. */
+  .pips{display:flex;align-items:center;gap:5px;margin-top:10px;flex-wrap:wrap}
+  .pip{width:11px;height:11px;border-radius:50%;
+    background:var(--wrap);border:1.5px solid var(--wrap)}
+  .expiring .pip{background:var(--amber);border-color:var(--amber)}
+  .expired .pip{background:var(--red);border-color:var(--red)}
+  .pipcount{margin-left:6px;font-family:var(--mono);font-size:12px;
+    color:var(--ink-soft)}
+
+  .note{text-align:center;color:var(--ink-soft);font-size:14px;
+    padding:44px 26px;line-height:1.55}
+  .err{background:var(--red-bg);border:1px solid #E8BCB9;color:var(--red);
+    border-radius:8px;padding:12px 14px;font-size:13.5px;margin:12px 0;
+    line-height:1.45}
+
+  .fab{position:fixed;right:16px;bottom:calc(18px + env(safe-area-inset-bottom));
+    z-index:25;background:var(--wrap);color:#fff;border:0;border-radius:999px;
+    padding:15px 22px;font:inherit;font-size:15px;font-weight:650;
+    box-shadow:0 6px 20px rgba(18,33,46,.28);cursor:pointer}
+  .fab:active{background:var(--wrap-deep)}
+
+  .overlay{position:fixed;inset:0;z-index:40;background:rgba(18,33,46,.55);
+    display:flex;align-items:flex-end}
+  .sheet{background:var(--paper);width:100%;border-radius:14px 14px 0 0;
+    padding:20px 18px;padding-bottom:calc(20px + env(safe-area-inset-bottom));
+    max-height:90vh;overflow-y:auto}
+  .sheet h2{margin:0 0 3px;font-size:18px}
+  .sheet .sub{margin:0 0 18px;font-size:13px;color:var(--ink-soft);
+    font-family:var(--mono)}
+
+  .stepper{display:flex;align-items:center;justify-content:center;gap:22px;
+    margin:6px 0 4px}
+  .step{width:62px;height:62px;border-radius:50%;border:1px solid var(--line);
+    background:var(--paper);font:inherit;font-size:28px;color:var(--wrap-deep);
+    cursor:pointer;line-height:1}
+  .step:disabled{opacity:.3;cursor:default}
+  .count{font-family:var(--mono);font-size:40px;font-weight:700;min-width:70px;
+    text-align:center}
+  .limit{text-align:center;font-size:13px;color:var(--ink-soft);
+    min-height:20px;margin-bottom:14px}
+  .limit.hit{color:var(--red);font-weight:600}
+
+  .field{margin-bottom:13px}
+  .field label{display:block;font-size:11px;text-transform:uppercase;
+    letter-spacing:.08em;font-weight:700;color:var(--ink-soft);margin-bottom:5px}
+  .field input{width:100%;font:inherit;font-size:16px;padding:12px;
+    border:1px solid var(--line);border-radius:7px;background:var(--paper);
+    color:var(--ink)}
+  .field input:focus{outline:none;border-color:var(--wrap);
+    box-shadow:0 0 0 3px rgba(28,110,140,.18)}
+  .two{display:flex;gap:12px}
+  .two .field{flex:1}
+
+  .btn{font:inherit;font-size:15.5px;font-weight:650;border-radius:8px;
+    padding:15px 20px;border:0;cursor:pointer;min-height:52px;width:100%}
+  .btn.primary{background:var(--wrap);color:#fff}
+  .btn.primary:disabled{opacity:.5}
+  .btn.ghost{background:none;color:var(--ink-soft);font-weight:500}
+  .btnrow{display:flex;gap:10px;margin-top:6px}
+  .btnrow .btn{width:auto;flex:1}
+  .btnrow .btn.primary{flex:2}
+
+  .toast{position:fixed;left:14px;right:14px;
+    bottom:calc(90px + env(safe-area-inset-bottom));z-index:50;
+    background:var(--ink);color:#fff;border-radius:9px;padding:13px 16px;
+    font-size:14px;box-shadow:0 6px 22px rgba(0,0,0,.3);
+    opacity:0;transform:translateY(10px);transition:opacity .18s,transform .18s;
+    pointer-events:none}
+  .toast.show{opacity:1;transform:translateY(0)}
+  .toast.bad{background:var(--red)}
+
+  .signin{max-width:340px;margin:14vh auto 0;text-align:center;padding:0 20px}
+  .signin h2{font-size:20px;margin:0 0 8px}
+  .signin p{font-size:14px;color:var(--ink-soft);line-height:1.55;
+    margin:0 0 22px}
+
+  @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+
+<header id="hdr" hidden>
+  <div class="hgroup">
+    <h1>Vascular Access Cart</h1>
+    <p id="sub">Loading&hellip;</p>
+  </div>
+  <button class="iconbtn" id="refresh">Refresh</button>
+</header>
+
+<main id="main">
+  <div class="note">Starting&hellip;</div>
+</main>
+
+<button class="fab" id="addBtn" hidden>+ Add stock</button>
+<div class="toast" id="toast"></div>
+
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script>
+/* ============================== state ============================== */
+let TOKEN = null;
+let TOKEN_CLIENT = null;
+let ROWS = [];
+let BUSY = false;
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+/* ============================== dates ============================== */
+/* The sheet formats expirations as mm/dd/yyyy, and we read formatted values,
+   so parsing and writing both use that one shape. Reading serial numbers
+   instead would mean reimplementing Sheets' epoch, which is a good way to be
+   quietly one day out. */
+function parseDate(s) {
+  const m = String(s || '').match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (!m) return null;
+  const d = new Date(+m[3], +m[1] - 1, +m[2]);
+  return isNaN(d) ? null : d;
+}
+function fmtDate(d) {
+  const p = n => String(n).padStart(2, '0');
+  return `${p(d.getMonth()+1)}/${p(d.getDate())}/${d.getFullYear()}`;
+}
+function today() { const d = new Date(); d.setHours(0,0,0,0); return d; }
+function daysUntil(d) { return Math.round((d - today()) / 86400000); }
+
+function statusOf(exp, qty, alertDays) {
+  if (!exp) return 'NO DATE';
+  if (!(qty > 0)) return 'USED UP';
+  const n = daysUntil(exp);
+  if (n < 0) return 'EXPIRED';
+  return n <= (alertDays > 0 ? alertDays : DEFAULT_ALERT_DAYS)
+    ? 'EXPIRING' : 'OK';
+}
+
+function uuid() {
+  if (crypto.randomUUID) return crypto.randomUUID();
+  return 'id-' + Date.now().toString(36) + '-' +
+    Math.random().toString(36).slice(2, 10);
+}
+
+/* ============================== auth =============================== */
+function initAuth() {
+  if (!window.google || !google.accounts) {
+    setTimeout(initAuth, 200);
+    return;
+  }
+  TOKEN_CLIENT = google.accounts.oauth2.initTokenClient({
+    client_id: CLIENT_ID,
+    scope: 'https://www.googleapis.com/auth/spreadsheets',
+    callback: resp => {
+      if (resp && resp.access_token) {
+        TOKEN = resp.access_token;
+        load();
+      } else {
+        showSignIn('Sign-in did not complete.');
+      }
+    }
+  });
+  TOKEN_CLIENT.requestAccessToken({ prompt: '' });   // silent if already granted
+}
+
+function signIn() { TOKEN_CLIENT.requestAccessToken({ prompt: 'consent' }); }
+
+function showSignIn(msg) {
+  $('hdr').hidden = true;
+  $('addBtn').hidden = true;
+  $('main').innerHTML =
+    '<div class="signin"><h2>Vascular Access Cart</h2>' +
+    '<p>Sign in with the Google account that has access to the tracker.</p>' +
+    (msg ? '<div class="err">' + esc(msg) + '</div>' : '') +
+    '<button class="btn primary" id="go">Sign in with Google</button></div>';
+  $('go').onclick = signIn;
+}
+
+/* =============================== api =============================== */
+async function api(path, opts = {}) {
+  const res = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}${path}`, {
+      ...opts,
+      headers: {
+        Authorization: 'Bearer ' + TOKEN,
+        'Content-Type': 'application/json',
+        ...(opts.headers || {})
+      }
+    });
+
+  if (res.status === 401) {
+    TOKEN = null;
+    throw new Error('AUTH');
+  }
+  if (!res.ok) {
+    let detail = '';
+    try { detail = (await res.json()).error?.message || ''; } catch {}
+    throw new Error(detail || `Sheets API error ${res.status}`);
+  }
+  return res.json();
+}
+
+async function fetchRows() {
+  const data = await api(
+    `/values/${INVENTORY}!A2:I?valueRenderOption=FORMATTED_VALUE`);
+  const vals = data.values || [];
+
+  return vals.map((r, i) => ({
+    sheetRow: i + 2,
+    item: String(r[0] ?? '').trim(),
+    exp: parseDate(r[1]),
+    expRaw: String(r[1] ?? ''),
+    qty: parseInt(r[2], 10) || 0,
+    alertDays: parseInt(r[5], 10) || 0,
+    id: String(r[8] ?? '').trim()
+  })).filter(r => r.item);
+}
+
+async function putQty(sheetRow, qty) {
+  await api(`/values/${INVENTORY}!C${sheetRow}?valueInputOption=USER_ENTERED`, {
+    method: 'PUT',
+    body: JSON.stringify({ values: [[qty]] })
+  });
+}
+
+async function appendInventory(item, exp, qty) {
+  await api(`/values/${INVENTORY}!A:I:append` +
+            `?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, {
+    method: 'POST',
+    body: JSON.stringify({
+      values: [[item, fmtDate(exp), qty, '', '', DEFAULT_ALERT_DAYS,
+                '', '', uuid()]]
+    })
+  });
+}
+
+async function appendUsage(item, qty) {
+  await api(`/values/${USAGE}!A:E:append` +
+            `?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, {
+    method: 'POST',
+    body: JSON.stringify({
+      values: [[fmtDate(today()), item, qty, '', uuid()]]
+    })
+  });
+}
+
+/* ============================== load =============================== */
+async function load() {
+  try {
+    $('hdr').hidden = false;
+    $('sub').textContent = 'Loading\u2026';
+    ROWS = await fetchRows();
+    render();
+  } catch (e) {
+    if (e.message === 'AUTH') { showSignIn('Session expired. Sign in again.'); }
+    else {
+      $('main').innerHTML = '<div class="err"><b>Could not read the sheet.</b>' +
+        '<br>' + esc(e.message) + '</div>';
+      $('sub').textContent = 'Not connected';
+    }
+  }
+}
+
+/* ============================= render ============================== */
+function render() {
+  const stocked = ROWS.filter(r => r.qty > 0)
+    .sort((a, b) => (a.exp && b.exp) ? a.exp - b.exp : 0);
+
+  const units = stocked.reduce((n, r) => n + r.qty, 0);
+  $('sub').textContent = stocked.length
+    ? `${stocked.length} line${stocked.length === 1 ? '' : 's'} \u00b7 ${units} unit${units === 1 ? '' : 's'}`
+    : 'Nothing in the cart';
+  $('addBtn').hidden = false;
+
+  if (!stocked.length) {
+    $('main').innerHTML = '<div class="note">Nothing in the cart.<br>' +
+      'Use <b>Add stock</b> to put something in.</div>';
+    return;
+  }
+
+  let html = '', lastGroup = null;
+  for (const r of stocked) {
+    const st = statusOf(r.exp, r.qty, r.alertDays);
+    const group = st === 'EXPIRED' ? 'Expired'
+      : st === 'EXPIRING' ? 'Expiring soon' : 'In date';
+    if (group !== lastGroup) {
+      html += `<div class="eyebrow">${group}</div>`;
+      lastGroup = group;
+    }
+    const cls = st === 'EXPIRED' ? ' expired' : st === 'EXPIRING' ? ' expiring' : '';
+    const n = r.exp ? daysUntil(r.exp) : null;
+
+    html += `<button class="row${cls}" data-id="${esc(r.id)}">` +
+      `<div class="row-name">${esc(r.item)}</div>` +
+      (cls ? `<span class="tag">${n < 0 ? 'EXPIRED' : n + 'd'}</span>` : '') +
+      `<div class="panel"><div><b>EXP</b><span>${esc(r.expRaw || '\u2014')}</span></div></div>` +
+      pips(r.qty) + `</button>`;
+  }
+  $('main').innerHTML = html;
+
+  document.querySelectorAll('.row').forEach(el =>
+    el.addEventListener('click', () => openUse(el.dataset.id)));
+}
+
+function pips(qty) {
+  if (qty > 12) {
+    return `<div class="pips"><span class="pipcount">${qty} on hand</span></div>`;
+  }
+  return '<div class="pips">' + '<span class="pip"></span>'.repeat(qty) +
+    `<span class="pipcount">${qty} on hand</span></div>`;
+}
+
+/* ============================ log usage ============================ */
+function openUse(id) {
+  const r = ROWS.find(x => x.id === id);
+  if (!r) return;
+
+  let n = 1;
+  const ov = document.createElement('div');
+  ov.className = 'overlay';
+  ov.innerHTML =
+    `<div class="sheet"><h2>${esc(r.item)}</h2>` +
+    `<p class="sub">EXP ${esc(r.expRaw)} \u00b7 ${r.qty} on hand</p>` +
+    `<div class="stepper">` +
+      `<button class="step" id="minus" aria-label="One fewer">\u2212</button>` +
+      `<div class="count" id="count">1</div>` +
+      `<button class="step" id="plus" aria-label="One more">+</button>` +
+    `</div>` +
+    `<div class="limit" id="limit"></div>` +
+    `<div class="btnrow">` +
+      `<button class="btn ghost" id="cancel">Cancel</button>` +
+      `<button class="btn primary" id="log">Log as used</button>` +
+    `</div></div>`;
+  document.body.appendChild(ov);
+
+  const paint = () => {
+    $('count').textContent = n;
+    $('minus').disabled = n <= 1;
+    $('plus').disabled = n >= r.qty;
+    const lim = $('limit');
+    if (n >= r.qty) {
+      lim.textContent = `Only ${r.qty} available`;
+      lim.className = 'limit hit';
+    } else {
+      lim.textContent = `${r.qty - n} would be left`;
+      lim.className = 'limit';
+    }
+  };
+  paint();
+
+  $('plus').onclick  = () => { if (n < r.qty) { n++; paint(); } };
+  $('minus').onclick = () => { if (n > 1)     { n--; paint(); } };
+  $('cancel').onclick = () => ov.remove();
+  ov.onclick = e => { if (e.target === ov) ov.remove(); };
+
+  $('log').onclick = async () => {
+    if (BUSY) return;
+    BUSY = true;
+    $('log').disabled = true;
+    $('log').textContent = 'Saving\u2026';
+    try {
+      await commitUse(r.id, n);
+      ov.remove();
+      toast(`Logged ${n}. ${r.item}.`);
+      await load();
+    } catch (e) {
+      $('log').disabled = false;
+      $('log').textContent = 'Log as used';
+      toast(e.message === 'AUTH' ? 'Session expired \u2014 reload'
+                                 : e.message, true);
+    } finally {
+      BUSY = false;
+    }
+  };
+}
+
+/**
+ * Re-reads the sheet and locates the row by its ID before writing.
+ *
+ * Row numbers move -- a rebuild re-sorts by expiration date, and a colleague
+ * adding stock shifts everything below it. Writing to the position this
+ * device happened to see on load would decrement the wrong item. The ID is
+ * the only thing that stays attached to the stock it describes.
+ */
+async function commitUse(id, n) {
+  const fresh = await fetchRows();
+  const r = fresh.find(x => x.id === id);
+  if (!r) throw new Error('That row is no longer on the sheet.');
+  if (r.qty <= 0) throw new Error('None left \u2014 someone else logged it.');
+
+  const take = Math.min(n, r.qty);
+  await putQty(r.sheetRow, r.qty - take);
+  await appendUsage(r.item, take);
+
+  if (take < n) {
+    throw new Error(`Only ${take} were left, so ${take} came off.`);
+  }
+}
+
+/* ============================ add stock ============================ */
+function openAdd() {
+  const names = [...new Set(ROWS.map(r => r.item))].sort();
+  const ov = document.createElement('div');
+  ov.className = 'overlay';
+  ov.innerHTML =
+    `<div class="sheet"><h2>Add stock</h2>` +
+    `<p class="sub">Same item and date as an existing line adds to it</p>` +
+    `<div class="field"><label>Item</label>` +
+      `<input id="aItem" list="names" autocomplete="off" ` +
+      `placeholder="e.g. 1 Lumen PICC"></div>` +
+    `<datalist id="names">` +
+      names.map(n => `<option value="${esc(n)}">`).join('') + `</datalist>` +
+    `<div class="two">` +
+      `<div class="field"><label>Expiration</label>` +
+        `<input id="aExp" type="date"></div>` +
+      `<div class="field"><label>How many</label>` +
+        `<input id="aQty" type="number" min="1" max="500" value="5" ` +
+        `inputmode="numeric"></div>` +
+    `</div>` +
+    `<div class="limit" id="aMsg"></div>` +
+    `<div class="btnrow">` +
+      `<button class="btn ghost" id="aCancel">Cancel</button>` +
+      `<button class="btn primary" id="aSave">Add</button>` +
+    `</div></div>`;
+  document.body.appendChild(ov);
+
+  $('aCancel').onclick = () => ov.remove();
+  ov.onclick = e => { if (e.target === ov) ov.remove(); };
+
+  $('aSave').onclick = async () => {
+    const item = $('aItem').value.trim();
+    const rawDate = $('aExp').value;
+    const qty = parseInt($('aQty').value, 10);
+    const msg = $('aMsg');
+
+    if (!item) { msg.textContent = 'Enter an item name.'; msg.className = 'limit hit'; return; }
+    if (!rawDate) { msg.textContent = 'Enter an expiration date.'; msg.className = 'limit hit'; return; }
+    if (!(qty > 0)) { msg.textContent = 'Enter how many.'; msg.className = 'limit hit'; return; }
+
+    const [y, m, d] = rawDate.split('-').map(Number);
+    const exp = new Date(y, m - 1, d);
+
+    if (BUSY) return;
+    BUSY = true;
+    $('aSave').disabled = true;
+    $('aSave').textContent = 'Saving\u2026';
+    try {
+      const added = await commitAdd(item, exp, qty);
+      ov.remove();
+      toast(added === 'merged'
+        ? `Added ${qty} to the existing line.`
+        : `New line: ${qty} \u00d7 ${item}.`);
+      await load();
+    } catch (e) {
+      $('aSave').disabled = false;
+      $('aSave').textContent = 'Add';
+      msg.textContent = e.message;
+      msg.className = 'limit hit';
+    } finally {
+      BUSY = false;
+    }
+  };
+}
+
+async function commitAdd(item, exp, qty) {
+  const fresh = await fetchRows();
+  const key = item.toLowerCase();
+  const match = fresh.find(r =>
+    r.item.toLowerCase() === key && r.exp && +r.exp === +exp);
+
+  if (match) {
+    await putQty(match.sheetRow, match.qty + qty);
+    return 'merged';
+  }
+  await appendInventory(item, exp, qty);
+  return 'new';
+}
+
+/* ============================== chrome ============================= */
+let toastTimer = null;
+function toast(msg, bad) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.className = 'toast show' + (bad ? ' bad' : '');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.className = 'toast'; }, 3400);
+}
+
+$('refresh').onclick = () => load();
+$('addBtn').onclick = () => openAdd();
+
+if (CLIENT_ID.startsWith('PASTE') || SHEET_ID.startsWith('PASTE')) {
+  $('main').innerHTML = '<div class="err"><b>Not configured yet.</b><br>' +
+    'Open this file and fill in CLIENT_ID and SHEET_ID at the top.</div>';
+} else {
+  initAuth();
+}
+</script>
+</body>
+</html>
