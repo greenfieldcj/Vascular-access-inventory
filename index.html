@@ -182,7 +182,7 @@ const DEFAULT_ALERT_DAYS = 45;
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <script>
 /* ============================== state ============================== */
-const BUILD = 'build 5';
+const BUILD = 'build 6';
 let TOKEN = null;
 let TOKEN_CLIENT = null;
 let ROWS = [];
@@ -256,7 +256,68 @@ function uuid() {
  */
 let GSI_TRIES = 0;
 
+/**
+ * Google hands out an access token good for about an hour. Keeping it means
+ * reopening the app inside that hour costs no taps at all.
+ *
+ * It is scoped to one spreadsheet, expires on its own, and lives only in this
+ * browser -- the same place the session cookie that produced it already sits.
+ */
+const TOKEN_KEY = 'vac_token';
+
+function saveToken(tok, expiresIn) {
+  try {
+    localStorage.setItem(TOKEN_KEY, JSON.stringify({
+      t: tok,
+      exp: Date.now() + (Number(expiresIn) || 3600) * 1000 - 60000
+    }));
+  } catch (e) {}
+}
+
+function cachedToken() {
+  try {
+    const raw = localStorage.getItem(TOKEN_KEY);
+    if (!raw) return null;
+    const o = JSON.parse(raw);
+    return (o && o.t && o.exp > Date.now()) ? o.t : null;
+  } catch (e) { return null; }
+}
+
+function clearToken() {
+  try { localStorage.removeItem(TOKEN_KEY); } catch (e) {}
+}
+
+/**
+ * Facebook, Instagram and similar open links in an embedded browser rather
+ * than Safari. Google refuses OAuth in those, so signing in is impossible --
+ * and the failure looks like a broken app rather than a wrong entry point.
+ */
+function inAppBrowser() {
+  const ua = navigator.userAgent || '';
+  return /FBAN|FBAV|Instagram|LinkedInApp|Twitter|Line\/|MicroMessenger/.test(ua);
+}
+
 function initAuth() {
+  if (inAppBrowser()) {
+    $('hdr').hidden = true;
+    $('main').innerHTML =
+      '<div class="signin"><h2>Open in Safari</h2>' +
+      '<p>This page was opened inside another app\u2019s browser. Google ' +
+      'will not allow sign-in there.</p>' +
+      '<div class="err">Tap the \u2026 or share button and choose ' +
+      '<b>Open in Safari</b>, then add it to your home screen.</div>' +
+      '<p style="font-size:11px;color:#9aa7b0;margin-top:26px">' + BUILD +
+      '</p></div>';
+    return;
+  }
+
+  const cached = cachedToken();
+  if (cached) {
+    TOKEN = cached;
+    load();
+    return;
+  }
+
   showSignIn(null, 'checking');
 
   if (!window.google || !google.accounts || !google.accounts.oauth2) {
@@ -275,6 +336,7 @@ function initAuth() {
     callback: resp => {
       if (resp && resp.access_token) {
         TOKEN = resp.access_token;
+        saveToken(resp.access_token, resp.expires_in);
         load();
       } else {
         showSignIn('Sign-in did not complete.', 'ready');
@@ -292,7 +354,10 @@ function signIn() {
   if (!TOKEN_CLIENT) { showSignIn('Still loading. Try again in a moment.', 'ready'); return; }
   const btn = $('go');
   if (btn) { btn.disabled = true; btn.textContent = 'Opening Google\u2026'; }
-  TOKEN_CLIENT.requestAccessToken({ prompt: 'consent' });
+  // No prompt parameter: Google shows the account chooser only when it has
+  // to, and never re-asks for consent already granted. Forcing 'consent' here
+  // made every single sign-in a full permissions screen.
+  TOKEN_CLIENT.requestAccessToken();
   setTimeout(() => {
     if (!TOKEN && $('go')) {
       $('go').disabled = false;
@@ -334,6 +399,7 @@ async function api(path, opts = {}) {
 
   if (res.status === 401) {
     TOKEN = null;
+    clearToken();
     throw new Error('AUTH');
   }
   if (!res.ok) {
